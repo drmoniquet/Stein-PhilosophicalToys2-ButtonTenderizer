@@ -1,5 +1,5 @@
 (() => {
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/vendor/generated/bidi-data.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/vendor/generated/bidi-data.js
   var latin1BidiTypes = [
     "BN",
     "BN",
@@ -975,7 +975,7 @@
     [1114110, 1114111, "BN"]
   ];
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/vendor/bidi.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/vendor/bidi.js
   function classifyCodePoint(codePoint) {
     if (codePoint <= 255)
       return latin1BidiTypes[codePoint];
@@ -1133,7 +1133,7 @@
     return segLevels;
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/vendor/analysis.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/vendor/analysis.js
   var collapsibleWhitespaceRunRe = /[ \t\n\r\f]+/g;
   var needsWhitespaceNormalizationRe = /[\t\n\r\f]| {2,}|^ | $/;
   function getWhiteSpaceProfile(whiteSpace) {
@@ -2269,7 +2269,7 @@
     };
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/vendor/measurement.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/vendor/measurement.js
   var measureContext = null;
   var segmentMetricCaches = /* @__PURE__ */ new Map();
   var cachedEngineProfile = null;
@@ -2463,7 +2463,7 @@
     return { cache, fontSize, emojiCorrection };
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/vendor/line-break.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/vendor/line-break.js
   function consumesAtLineStart(kind) {
     return kind === "space" || kind === "zero-width-break" || kind === "soft-hyphen";
   }
@@ -3171,7 +3171,7 @@
     return stepPreparedChunkLineGeometry(prepared, cursor, chunkIndex, maxWidth);
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/vendor/line-text.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/vendor/line-text.js
   var sharedGraphemeSegmenter2 = null;
   var sharedLineTextCaches = /* @__PURE__ */ new WeakMap();
   function getSharedGraphemeSegmenter2() {
@@ -3233,7 +3233,7 @@
     return text;
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/vendor/layout.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/vendor/layout.js
   var sharedGraphemeSegmenter3 = null;
   function getSharedGraphemeSegmenter3() {
     if (sharedGraphemeSegmenter3 === null) {
@@ -3571,8 +3571,95 @@
     return createLayoutLine(prepared, getLineTextCache(prepared), width, lineStartSegmentIndex, lineStartGraphemeIndex, end.segmentIndex, end.graphemeIndex);
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/lib/columns.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/contour-flow.js
   var segmenter = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+  var BAND_ABOVE = 0.8;
+  var BAND_BELOW = 0.2;
+  function bandForBaseline(y, lineHeight) {
+    return [y - lineHeight * BAND_ABOVE, y + lineHeight * BAND_BELOW];
+  }
+  function subtractInterval(free, a, b) {
+    if (!(b > a)) return free;
+    const out = [];
+    for (const iv of free) {
+      const [lo, hi] = iv;
+      if (b <= lo || a >= hi) {
+        out.push(iv);
+        continue;
+      }
+      if (a > lo) out.push([lo, a]);
+      if (b < hi) out.push([b, hi]);
+    }
+    return out;
+  }
+  function freeIntervalsForBand(colLeft, colRight, exclusions, yTop, yBottom, minWidth = 1) {
+    let free = [[colLeft, colRight]];
+    for (const ex of exclusions) {
+      const span = ex.spanForBand(yTop, yBottom);
+      if (!span) continue;
+      free = subtractInterval(free, span[0], span[1]);
+      if (free.length === 0) break;
+    }
+    return free.filter((iv) => iv[1] - iv[0] >= minWidth);
+  }
+  function sameCursor(a, b) {
+    return a.segmentIndex === b.segmentIndex && a.graphemeIndex === b.graphemeIndex;
+  }
+  function buildContourFlow(layoutSolve, exclusions, measure, opts = {}) {
+    const { prepareds, columnX, finalWidths, lineHeight, baselineOffset, viewportHeight } = layoutSolve;
+    const minIntervalWidth = opts.minIntervalWidth ?? Math.max(1, lineHeight * 0.5);
+    const hasExclusions = exclusions && exclusions.length > 0;
+    const cells = [];
+    const columns = [];
+    for (let i = 0; i < prepareds.length; i++) {
+      const prepared = prepareds[i];
+      const colLeft = columnX[i];
+      const colRight = colLeft + finalWidths[i];
+      let cursor = { segmentIndex: 0, graphemeIndex: 0 };
+      let row = 0;
+      let y = baselineOffset;
+      let linesEmitted = 0;
+      while (y < viewportHeight + lineHeight) {
+        let free;
+        if (hasExclusions) {
+          const [yTop, yBottom] = bandForBaseline(y, lineHeight);
+          free = freeIntervalsForBand(colLeft, colRight, exclusions, yTop, yBottom, minIntervalWidth);
+        } else {
+          free = [[colLeft, colRight]];
+        }
+        let placedSomething = false;
+        let exhausted = false;
+        let col = 0;
+        for (const [lo, hi] of free) {
+          const line = layoutNextLine(prepared, cursor, hi - lo);
+          if (!line) {
+            exhausted = true;
+            break;
+          }
+          if (sameCursor(line.end, cursor)) break;
+          let x = 0;
+          for (const { segment } of segmenter.segment(line.text)) {
+            const advance = measure(segment);
+            if (!/^\s+$/.test(segment)) {
+              cells.push({ char: segment, x: lo + x + advance / 2, y, row, col, opacity: 1 });
+            }
+            x += advance;
+            col++;
+          }
+          cursor = line.end;
+          placedSomething = true;
+        }
+        if (exhausted && !placedSomething) break;
+        row++;
+        y += lineHeight;
+        if (placedSomething) linesEmitted++;
+      }
+      columns.push({ x: colLeft, width: finalWidths[i], lineCount: linesEmitted });
+    }
+    return { cells, columns };
+  }
+
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/columns.js
   function splitTenderButtons(text) {
     const titles = ["OBJECTS", "FOOD", "ROOMS"];
     const positions = titles.map((t) => {
@@ -3648,53 +3735,36 @@ ${inner}` });
       const scale = availableWidth / best.sum;
       finalWidths = best.widths.map((w) => w * scale);
     }
+    const baselineOffset = opts.baselineOffset ?? best.size * 0.95;
+    const columnX = [];
+    let cx = 0;
+    for (let i = 0; i < books.length; i++) {
+      columnX.push(cx);
+      cx += finalWidths[i] + gutter;
+    }
+    const layoutSolve = {
+      prepareds: best.prepareds,
+      columnX,
+      finalWidths,
+      lineHeight: best.lineHeight,
+      baselineOffset,
+      viewportHeight,
+      viewportWidth,
+      fontSize: best.size,
+      fontFamily,
+      lineHeightRatio,
+      gutter
+    };
     const previousFont = ctx2.font;
     ctx2.font = best.font;
-    const baselineOffset = opts.baselineOffset ?? best.size * 0.95;
-    const cells = [];
-    const columns = [];
-    let columnX = 0;
-    for (let i = 0; i < books.length; i++) {
-      const columnWidth = finalWidths[i];
-      const prepared = best.prepareds[i];
-      let cursor = { segmentIndex: 0, graphemeIndex: 0 };
-      let row = 0;
-      let y = baselineOffset;
-      let linesEmitted = 0;
-      while (y < viewportHeight + best.lineHeight) {
-        const line = layoutNextLine(prepared, cursor, columnWidth);
-        if (!line) break;
-        let x = 0;
-        let col = 0;
-        for (const { segment } of segmenter.segment(line.text)) {
-          const advance = ctx2.measureText(segment).width;
-          const isBlank = /^\s+$/.test(segment);
-          if (!isBlank) {
-            cells.push({
-              char: segment,
-              x: columnX + x + advance / 2,
-              y,
-              row,
-              col,
-              opacity: 1
-            });
-          }
-          x += advance;
-          col++;
-        }
-        cursor = line.end;
-        row++;
-        y += best.lineHeight;
-        linesEmitted++;
-      }
-      columns.push({ x: columnX, width: columnWidth, title: books[i].title, lineCount: linesEmitted });
-      columnX += columnWidth + gutter;
-    }
+    const measure = (segment) => ctx2.measureText(segment).width;
+    const flow = buildContourFlow(layoutSolve, [], measure);
     ctx2.font = previousFont;
-    return { cells, fontSize: best.size, lineHeight: best.lineHeight, columns };
+    const columns = flow.columns.map((c, i) => ({ ...c, title: books[i].title }));
+    return { cells: flow.cells, fontSize: best.size, lineHeight: best.lineHeight, columns, layoutSolve };
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/lib/render.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/render.js
   function renderGrid(ctx2, cells, opts = {}) {
     const font = opts.font ?? "13px ui-monospace, monospace";
     const color = opts.color ?? "#f4f4f4";
@@ -3764,7 +3834,7 @@ ${inner}` });
     ctx2.restore();
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/lib/image-sampler.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/image-sampler.js
   function sampleImage(image, sampleW, sampleH, opts = {}) {
     const { fit = "cover", letterboxLuminance = 0 } = opts;
     const w = Math.max(1, Math.floor(sampleW));
@@ -3861,15 +3931,15 @@ ${inner}` });
     const fx = x - x0, fy = y - y0;
     const i00 = y0 * width + x0, i01 = y0 * width + x1;
     const i10 = y1 * width + x0, i11 = y1 * width + x1;
-    const lerp = (ch) => {
+    const lerp2 = (ch) => {
       const ab = ch[i00] + (ch[i01] - ch[i00]) * fx;
       const cd = ch[i10] + (ch[i11] - ch[i10]) * fx;
       return ab + (cd - ab) * fy;
     };
     return {
-      r: Math.round(lerp(r)),
-      g: Math.round(lerp(g)),
-      b: Math.round(lerp(b))
+      r: Math.round(lerp2(r)),
+      g: Math.round(lerp2(g)),
+      b: Math.round(lerp2(b))
     };
   }
   function luminanceAt(map, u, v) {
@@ -3889,7 +3959,7 @@ ${inner}` });
     return ab + (cd - ab) * fy;
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/transforms/brightness-map.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/transforms/brightness-map.js
   function applyBrightnessMap(cells, image, opts) {
     const {
       canvasWidth,
@@ -3925,7 +3995,7 @@ ${inner}` });
     return out;
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/transforms/color-map.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/transforms/color-map.js
   function applyColorMap(cells, image, opts) {
     const {
       canvasWidth,
@@ -3958,7 +4028,7 @@ ${inner}` });
     return out;
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/transforms/text-relationship.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/transforms/text-relationship.js
   var WORD_CHAR = /^[A-Za-z0-9']$/;
   function buildTokens(cells) {
     const tokens = [];
@@ -3997,24 +4067,7 @@ ${inner}` });
     return { tokens, wordToTokens };
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/transforms/citation-highlight.js
-  var HIGHLIGHT_BG = "#ffe600";
-  var HIGHLIGHT_FG = "#000";
-  function applyCitationHighlight(cells, opts) {
-    const { highlightCells } = opts;
-    if (!highlightCells || highlightCells.size === 0) return cells;
-    const out = new Array(cells.length);
-    for (let i = 0; i < cells.length; i++) {
-      if (highlightCells.has(i)) {
-        out[i] = { ...cells[i], bgColor: HIGHLIGHT_BG, color: HIGHLIGHT_FG, opacity: 1 };
-      } else {
-        out[i] = cells[i];
-      }
-    }
-    return out;
-  }
-
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/lib/raw-tokens.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/raw-tokens.js
   var WORD_RE = /[A-Za-z0-9']+/g;
   function buildRawTokens(text) {
     const out = [];
@@ -4033,7 +4086,7 @@ ${inner}` });
     return out;
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/lib/chiron.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/chiron.js
   function wrapToLines(ctx2, words2, maxWidth) {
     const lines = [];
     let line = "";
@@ -4096,7 +4149,7 @@ ${inner}` });
     ctx2.restore();
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/lib/lexicon.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/lexicon.js
   var WORD_RE2 = /[A-Za-z0-9']+/g;
   function words(s) {
     const out = [];
@@ -4182,7 +4235,390 @@ ${inner}` });
     });
   }
 
-  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/aibuttons-2lHOZL/main.js
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/silhouette.js
+  function greedyLineCount(wordW, spaceW, W) {
+    let lines = 1, cur = 0;
+    for (let i = 0; i < wordW.length; i++) {
+      if (i > 0 && cur + spaceW + wordW[i] > W) {
+        lines++;
+        cur = wordW[i];
+      } else cur += (i > 0 ? spaceW : 0) + wordW[i];
+    }
+    return lines;
+  }
+  function minWidthForLines(wordW, spaceW, L) {
+    const maxWord = Math.max(...wordW, 1);
+    let lo = maxWord;
+    let hi = Math.max(maxWord, wordW.reduce((a, b) => a + b, 0) + spaceW * (wordW.length - 1));
+    for (let i = 0; i < 32 && hi - lo > 0.5; i++) {
+      const mid = (lo + hi) / 2;
+      if (greedyLineCount(wordW, spaceW, mid) <= L) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  }
+  function wrapAt(wordW, spaceW, W) {
+    const lines = [];
+    let cur = [], curW = 0;
+    for (let i = 0; i < wordW.length; i++) {
+      if (cur.length && curW + spaceW + wordW[i] > W) {
+        lines.push(cur);
+        cur = [];
+        curW = 0;
+      }
+      curW += (cur.length ? spaceW : 0) + wordW[i];
+      cur.push(i);
+    }
+    if (cur.length) lines.push(cur);
+    return lines;
+  }
+  function layoutGrownPhrase(phrase, fontPx, measure, opts = {}) {
+    const maxLines = Math.max(1, opts.maxLines ?? 1);
+    const widthBudget = opts.widthBudget ?? Infinity;
+    const lineHeightRatio = opts.lineHeightRatio ?? 1.08;
+    const words2 = String(phrase).trim().split(/\s+/).filter(Boolean);
+    const lineHeight = fontPx * lineHeightRatio;
+    const spaceW = measure(" ");
+    const wordW = words2.map((w) => {
+      let s = 0;
+      for (const ch of w) s += measure(ch);
+      return s;
+    });
+    let chosen = null;
+    for (let L = 1; L <= maxLines; L++) {
+      const mw = minWidthForLines(wordW, spaceW, L);
+      if (mw <= widthBudget) {
+        chosen = wrapAt(wordW, spaceW, mw);
+        break;
+      }
+      if (L === maxLines) chosen = wrapAt(wordW, spaceW, mw);
+    }
+    const lines = chosen.map((idxs) => ({
+      words: idxs.map((i) => words2[i]),
+      width: idxs.reduce((a, i, k) => a + wordW[i] + (k ? spaceW : 0), 0)
+    }));
+    const boxH = Math.max(lines.length, 1) * lineHeight;
+    const boxW = lines.reduce((m, l) => Math.max(m, l.width), 0);
+    const glyphs = [];
+    let ly = -boxH / 2 + fontPx * 0.8;
+    for (const line of lines) {
+      let x = -line.width / 2;
+      for (let wi = 0; wi < line.words.length; wi++) {
+        for (const ch of line.words[wi]) {
+          const adv = measure(ch);
+          glyphs.push({ char: ch, lx: x + adv / 2, ly, advance: adv });
+          x += adv;
+        }
+        if (wi < line.words.length - 1) x += spaceW;
+      }
+      ly += lineHeight;
+    }
+    return { glyphs, boxW, boxH, lineHeight, lineCount: lines.length };
+  }
+  function reduceToBands({ width, height, alphaAt, bandHeight, pad, threshold, originX, originY }) {
+    const thr = threshold ?? 24;
+    const nBands = Math.max(1, Math.ceil(height / bandHeight));
+    const extents = new Array(nBands);
+    for (let b = 0; b < nBands; b++) {
+      const y0 = b * bandHeight;
+      const y1 = Math.min(height, Math.round(y0 + bandHeight));
+      let min = Infinity, max = -Infinity;
+      for (let y = Math.round(y0); y < y1; y++) {
+        let lo = -1;
+        for (let x = 0; x < width; x++) {
+          if (alphaAt(x, y) >= thr) {
+            lo = x;
+            break;
+          }
+        }
+        if (lo < 0) continue;
+        let hi = lo;
+        for (let x = width - 1; x > lo; x--) {
+          if (alphaAt(x, y) >= thr) {
+            hi = x;
+            break;
+          }
+        }
+        if (lo < min) min = lo;
+        if (hi > max) max = hi;
+      }
+      extents[b] = min === Infinity ? null : [originX + min - pad, originX + max + pad];
+    }
+    return { extents, bandHeight, localTop: originY };
+  }
+  function tableExtentAt(table, yTop, yBottom, cx, cy, f) {
+    const lyTop = (yTop - cy) / f - table.localTop;
+    const lyBottom = (yBottom - cy) / f - table.localTop;
+    let b0 = Math.floor(lyTop / table.bandHeight);
+    let b1 = Math.floor(lyBottom / table.bandHeight);
+    if (b0 > b1) {
+      const t = b0;
+      b0 = b1;
+      b1 = t;
+    }
+    b0 = Math.max(0, b0);
+    b1 = Math.min(table.extents.length - 1, b1);
+    let min = Infinity, max = -Infinity;
+    for (let b = b0; b <= b1; b++) {
+      const e = table.extents[b];
+      if (!e) continue;
+      if (e[0] < min) min = e[0];
+      if (e[1] > max) max = e[1];
+    }
+    if (min === Infinity) return null;
+    return [cx + min * f, cx + max * f];
+  }
+  function buildGrownObject(args) {
+    const {
+      phrase,
+      centroidX,
+      centroidY,
+      targetFontPx,
+      baseFontPx,
+      fontFamily,
+      maxLines = 1,
+      widthBudget = Infinity,
+      measureGrown: measureGrown2,
+      makeCanvas,
+      mode = "contour",
+      viewportWidth = Infinity,
+      viewportHeight = Infinity
+    } = args;
+    const pad = args.pad ?? targetFontPx * 0.18;
+    const bandHeight = args.bandHeight ?? Math.max(2, targetFontPx * 0.18);
+    const layout2 = layoutGrownPhrase(phrase, targetFontPx, measureGrown2, { maxLines, widthBudget });
+    const { glyphs, boxW, boxH } = layout2;
+    const f0 = baseFontPx / targetFontPx;
+    let table = null;
+    if (mode === "contour" && makeCanvas) {
+      const cw = Math.ceil(boxW + 2 * pad);
+      const ch = Math.ceil(boxH + 2 * pad);
+      const cv = makeCanvas(cw, ch);
+      const cx2 = cv.getContext("2d");
+      cx2.clearRect(0, 0, cw, ch);
+      cx2.font = `700 ${targetFontPx}px ${fontFamily}`;
+      cx2.textAlign = "center";
+      cx2.textBaseline = "alphabetic";
+      cx2.fillStyle = "#fff";
+      const offX = boxW / 2 + pad;
+      const offY = boxH / 2 + pad;
+      for (const g of glyphs) cx2.fillText(g.char, g.lx + offX, g.ly + offY);
+      const img = cx2.getImageData(0, 0, cw, ch);
+      const dat = img.data;
+      const alphaAt = (x, y) => dat[(y * cw + x) * 4 + 3];
+      table = reduceToBands({
+        width: cw,
+        height: ch,
+        alphaAt,
+        bandHeight,
+        pad,
+        originX: -(boxW / 2) - pad,
+        originY: -(boxH / 2) - pad
+      });
+    }
+    const halfW = boxW / 2 + pad;
+    const halfH = boxH / 2 + pad;
+    function effCenter(f) {
+      const hw = halfW * f, hh = halfH * f;
+      let cx = centroidX, cy = centroidY;
+      cx = 2 * hw <= viewportWidth ? Math.min(Math.max(cx, hw), viewportWidth - hw) : viewportWidth / 2;
+      cy = 2 * hh <= viewportHeight ? Math.min(Math.max(cy, hh), viewportHeight - hh) : viewportHeight / 2;
+      return [cx, cy];
+    }
+    return {
+      phrase,
+      centroidX,
+      centroidY,
+      boxW,
+      boxH,
+      glyphs,
+      f0,
+      targetFontPx,
+      baseFontPx,
+      // Exclusion span for one line-band at linear factor f. Contour when sampled,
+      // else a centered box.
+      spanForBand(yTop, yBottom, f) {
+        const [cx, cy] = effCenter(f);
+        if (table) return tableExtentAt(table, yTop, yBottom, cx, cy, f);
+        const top = cy - halfH * f;
+        const bot = cy + halfH * f;
+        if (yBottom <= top || yTop >= bot) return null;
+        return [cx - halfW * f, cx + halfW * f];
+      },
+      // An exclusion object bound to the current factor f (what contour-flow wants).
+      exclusionAt(f) {
+        return { spanForBand: (yTop, yBottom) => this.spanForBand(yTop, yBottom, f) };
+      },
+      // Cells for the grown glyphs at factor f. fontScale is relative to the base
+      // grid font (renderGrid multiplies basePx by fontScale).
+      glyphCellsAt(f, opts = {}) {
+        const scaleToBase = targetFontPx / baseFontPx * f;
+        const [cx, cy] = effCenter(f);
+        const color = opts.color;
+        const fontWeight = opts.fontWeight ?? 700;
+        const out = [];
+        for (const g of glyphs) {
+          out.push({
+            char: g.char,
+            x: cx + g.lx * f,
+            y: cy + g.ly * f,
+            row: 0,
+            col: 0,
+            opacity: opts.opacity ?? 1,
+            fontScale: scaleToBase,
+            fontWeight,
+            ...color ? { color } : {}
+          });
+        }
+        return out;
+      }
+    };
+  }
+
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/lib/citation-objects.js
+  function bookOffsets(books) {
+    const offs = [];
+    let o = 0;
+    for (const b of books) {
+      offs.push(o);
+      o += b.body.length + 2;
+    }
+    return offs;
+  }
+  function mergeCharRanges(ranges) {
+    if (ranges.length <= 1) return ranges.slice();
+    const s = ranges.slice().sort((a, b) => a[0] - b[0]);
+    const out = [s[0].slice()];
+    for (let i = 1; i < s.length; i++) {
+      const last = out[out.length - 1];
+      if (s[i][0] <= last[1]) last[1] = Math.max(last[1], s[i][1]);
+      else out.push(s[i].slice());
+    }
+    return out;
+  }
+  function removalRangesByBook(books, canonical, canonicalIndices) {
+    const offs = bookOffsets(books);
+    const byBook = books.map(() => []);
+    for (const ci of canonicalIndices) {
+      const tok = canonical[ci];
+      if (!tok) continue;
+      let bi = 0;
+      for (let i = 0; i < offs.length; i++) if (tok.charStart >= offs[i]) bi = i;
+      byBook[bi].push([tok.charStart - offs[bi], tok.charEnd - offs[bi]]);
+    }
+    return byBook.map(mergeCharRanges);
+  }
+  function bodyWithRemovals(body, ranges) {
+    if (!ranges.length) return body;
+    let out = "";
+    let pos = 0;
+    for (const [s, e] of ranges) {
+      out += body.slice(pos, s) + " ";
+      pos = e;
+    }
+    out += body.slice(pos);
+    return out;
+  }
+  function buildModifiedPrepareds(books, canonical, terms, baseFont) {
+    const idx = [];
+    for (const t of terms) if (t) for (const ci of rangeIndices(t.ranges)) idx.push(ci);
+    const byBook = removalRangesByBook(books, canonical, idx);
+    return books.map((b, i) => prepareWithSegments(bodyWithRemovals(b.body, byBook[i]), baseFont));
+  }
+  function centroidAndPhrase(range, canonical, canonicalToGrid, gridTokens, baseCells) {
+    const cells = [];
+    const wordsOut = [];
+    for (let ci = range[0]; ci <= range[1]; ci++) {
+      const tok = canonical[ci];
+      if (tok) wordsOut.push(tok.word);
+      const gi = canonicalToGrid[ci];
+      if (gi == null || gi < 0) continue;
+      const gt = gridTokens[gi];
+      if (gt) for (const c of gt.cellIndices) cells.push(c);
+    }
+    if (!cells.length) return null;
+    let sx = 0, sy = 0;
+    for (const c of cells) {
+      sx += baseCells[c].x;
+      sy += baseCells[c].y;
+    }
+    return { centroidX: sx / cells.length, centroidY: sy / cells.length, phrase: wordsOut.join(" ") };
+  }
+  function buildObjectsForTerm(term, deps) {
+    const {
+      canonical,
+      canonicalToGrid,
+      gridTokens,
+      baseCells,
+      layoutSolve,
+      measureGrown: measureGrown2,
+      makeCanvas,
+      fontFamily,
+      targetFontPx,
+      mode
+    } = deps;
+    const baseFontPx = layoutSolve.fontSize;
+    const maxLines = deps.maxLines ?? 3;
+    const widthBudget = layoutSolve.viewportWidth * 0.96;
+    const objects = [];
+    for (const range of term.ranges) {
+      const cp = centroidAndPhrase(range, canonical, canonicalToGrid, gridTokens, baseCells);
+      if (!cp) continue;
+      objects.push(buildGrownObject({
+        phrase: cp.phrase,
+        centroidX: cp.centroidX,
+        centroidY: cp.centroidY,
+        targetFontPx,
+        baseFontPx,
+        fontFamily,
+        maxLines,
+        widthBudget,
+        measureGrown: measureGrown2,
+        makeCanvas,
+        mode,
+        viewportWidth: layoutSolve.viewportWidth,
+        viewportHeight: layoutSolve.viewportHeight
+      }));
+    }
+    return objects;
+  }
+  var VIEWPORT_FILL = 1.4;
+  function solveCapScale(probe, f0, { steps = 12 } = {}) {
+    if (probe(1) <= 0) return 1;
+    if (probe(f0) > 0) return f0;
+    let lo = f0, hi = 1;
+    for (let i = 0; i < steps; i++) {
+      const mid = (lo + hi) / 2;
+      if (probe(mid) <= 0) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  }
+  function buildCapProbe(modifiedSolve, objects, measure) {
+    const vh = modifiedSolve.viewportHeight;
+    const lh = modifiedSolve.lineHeight;
+    const base = modifiedSolve.baselineOffset;
+    const allow = vh * VIEWPORT_FILL;
+    const tallSolve = { ...modifiedSolve, viewportHeight: allow + vh };
+    const vw = modifiedSolve.viewportWidth;
+    return (scale) => {
+      const exclusions = objects.map((o) => o.exclusionAt(scale));
+      const flow = buildContourFlow(tallSolve, exclusions, measure);
+      let maxBottom = 0;
+      for (const c of flow.columns) {
+        const bottom = base + c.lineCount * lh;
+        if (bottom > maxBottom) maxBottom = bottom;
+      }
+      let overflow = maxBottom - allow;
+      for (const o of objects) {
+        const hOver = o.boxW * scale - vw * 0.96;
+        if (hOver > overflow) overflow = hOver;
+      }
+      return overflow;
+    };
+  }
+
+  // ../../../../private/var/folders/3n/dgrm2s096y11j19hmvvx72m40000gn/T/gsButtons-9pbJGb/main.js
   var canvas = document.getElementById("text-canvas");
   var ctx = canvas.getContext("2d");
   var chironCanvas = document.getElementById("chiron-canvas");
@@ -4201,7 +4637,7 @@ ${inner}` });
   var commentaryTextEl = document.getElementById("commentary-text");
   var referencesTextEl = document.getElementById("references-text");
   var IDLE_RESUME_MS = 1e4;
-  var CHIRON_LINES = 3;
+  var CHIRON_LINES = 2;
   var state = {
     text: "",
     // raw tenderbuttons.txt
@@ -4209,10 +4645,12 @@ ${inner}` });
     // [{title, body}, ...]
     baseCells: [],
     // grid before transforms
+    layoutSolve: null,
+    // solved inputs for the contour-flow packer (lib/columns.js)
     image: null,
     // user-loaded HTMLImageElement (Stage 2), or null
     fontSize: 13,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    fontFamily: "'Ovo', Georgia, 'Times New Roman', serif",
     lineHeightRatio: 1.18,
     gutter: 16,
     columns: [],
@@ -4233,8 +4671,6 @@ ${inner}` });
     termImages: {
       manifest: null,
       manifestLoading: null,
-      pick: /* @__PURE__ */ new Map(),
-      // slug -> chosen index
       cache: /* @__PURE__ */ new Map(),
       // slug -> { img, loading, composite? }
       lru: [],
@@ -4245,7 +4681,7 @@ ${inner}` });
     cssWidth: 0,
     cssHeight: 0,
     cssChironHeight: 0,
-    chironFontPx: 20,
+    chironFontPx: 13,
     playback: {
       // Canonical word stream + grid mapping: still the bridge from a citation's
       // word-index ranges to on-screen cells.
@@ -4260,14 +4696,36 @@ ${inner}` });
       playing: false,
       intervalMs: 5e3,
       timerId: null,
-      idleTimerId: null
+      idleTimerId: null,
+      // Grown-citation effect: per-term object cache + the active grow/shrink
+      // transition + the currently-settled term objects.
+      objCache: /* @__PURE__ */ new Map(),
+      // `${termIndex}@${w}x${h}` -> term object entry
+      anim: null,
+      // { incoming, outgoing, startTs, durationMs, modifiedSolve, rafId, active }
+      settled: null
+      // { entry, modifiedSolve } shown between transitions
     }
   };
+  var TARGET_FONT_PX = 60;
+  var ANIM_MS = 1200;
+  var measureCanvas = document.createElement("canvas");
+  var measureCtx = measureCanvas.getContext("2d");
+  function measureGrown(s) {
+    measureCtx.font = `700 ${TARGET_FONT_PX}px ${state.fontFamily}`;
+    return measureCtx.measureText(s).width;
+  }
+  function makeOffscreenCanvas(w, h) {
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, w);
+    c.height = Math.max(1, h);
+    return c;
+  }
   function setStatus(msg) {
     statusEl.textContent = msg;
   }
   var CAT_H = 24;
-  var COMMENT_H = 40;
+  var COMMENT_H = 110;
   var REFS_H = 24;
   function resizeCanvasToWindow() {
     const dpr = window.devicePixelRatio || 1;
@@ -4327,18 +4785,6 @@ ${inner}` });
       if (pb.termIndex >= pb.terms.length) pb.termIndex = Math.max(0, pb.terms.length - 1);
     }
   }
-  function highlightCellsForTerm(term) {
-    const set = /* @__PURE__ */ new Set();
-    const pb = state.playback;
-    if (!term || !pb.canonicalToGrid) return set;
-    for (const ci of rangeIndices(term.ranges)) {
-      const gi = pb.canonicalToGrid[ci];
-      if (gi == null || gi < 0) continue;
-      const tok = pb.gridTokens[gi];
-      if (tok) for (const cell of tok.cellIndices) set.add(cell);
-    }
-    return set;
-  }
   function currentTerm() {
     const pb = state.playback;
     return pb.terms.length ? pb.terms[pb.termIndex] : null;
@@ -4366,6 +4812,9 @@ ${inner}` });
     state.baseCells = result.cells;
     state.columns = result.columns;
     state.fontSize = result.fontSize;
+    state.layoutSolve = result.layoutSolve;
+    state.playback.objCache.clear();
+    _measureCache.clear();
     const t1 = performance.now();
     setStatus(`3 columns @ ${state.fontSize.toFixed(2)}px \u2014 ${state.baseCells.length.toLocaleString()} cells in ${(t1 - t0).toFixed(0)}ms`);
     rebuildPlaybackTokens();
@@ -4395,9 +4844,87 @@ ${inner}` });
     }
     return img;
   }
+  var _measureCache = /* @__PURE__ */ new Map();
+  function measureAt(segment) {
+    const hit = _measureCache.get(segment);
+    if (hit !== void 0) return hit;
+    const w = ctx.measureText(segment).width;
+    _measureCache.set(segment, w);
+    return w;
+  }
+  var clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+  var lerp = (a, b, t) => a + (b - a) * t;
+  var easeInOut = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  function prepareTermObjects(i) {
+    const pb = state.playback;
+    const key = `${i}@${state.cssWidth}x${state.cssHeight}`;
+    if (pb.objCache.has(key)) return pb.objCache.get(key);
+    const term = pb.terms[i];
+    const baseFont = fontString(state.fontSize);
+    const objects = buildObjectsForTerm(term, {
+      canonical: pb.canonical,
+      canonicalToGrid: pb.canonicalToGrid,
+      gridTokens: pb.gridTokens,
+      baseCells: state.baseCells,
+      layoutSolve: state.layoutSolve,
+      measureGrown,
+      makeCanvas: makeOffscreenCanvas,
+      fontFamily: state.fontFamily,
+      targetFontPx: TARGET_FONT_PX,
+      mode: "contour"
+    });
+    const modifiedSolveSelf = {
+      ...state.layoutSolve,
+      prepareds: buildModifiedPrepareds(state.books, pb.canonical, [term], baseFont)
+    };
+    const f0 = objects.length ? objects[0].f0 : state.fontSize / TARGET_FONT_PX;
+    let objScale = f0;
+    if (objects.length) {
+      const prevFont = ctx.font;
+      ctx.font = baseFont;
+      objScale = solveCapScale(buildCapProbe(modifiedSolveSelf, objects, measureAt), f0);
+      ctx.font = prevFont;
+    }
+    const entry = { termIndex: i, term, objects, objScale, f0, modifiedSolveSelf };
+    pb.objCache.set(key, entry);
+    return entry;
+  }
+  function currentFrameSpec() {
+    const pb = state.playback;
+    const anim = pb.anim;
+    if (anim && anim.active) {
+      const e = easeInOut(clamp01((performance.now() - anim.startTs) / anim.durationMs));
+      const specs = [];
+      if (anim.incoming) specs.push({ entry: anim.incoming, f: lerp(anim.incoming.f0, anim.incoming.objScale, e) });
+      if (anim.outgoing) specs.push({ entry: anim.outgoing, f: lerp(anim.outgoing.objScale, anim.outgoing.f0, e) });
+      return { solve: anim.modifiedSolve, specs };
+    }
+    if (pb.settled && pb.settled.entry.objects.length) {
+      return { solve: pb.settled.modifiedSolve, specs: [{ entry: pb.settled.entry, f: pb.settled.entry.objScale }] };
+    }
+    return null;
+  }
   function renderCanvas() {
     const term = currentTerm();
-    let cells = state.baseCells;
+    const spec = currentFrameSpec();
+    const hasObjects = !!(spec && spec.specs.length);
+    let cells;
+    let grown = null;
+    if (hasObjects) {
+      const exclusions = [];
+      for (const s of spec.specs) for (const o of s.entry.objects) exclusions.push(o.exclusionAt(s.f));
+      const prevFont = ctx.font;
+      ctx.font = fontString(state.fontSize);
+      cells = buildContourFlow(spec.solve, exclusions, measureAt).cells;
+      ctx.font = prevFont;
+      const light2 = state.options.lightBg;
+      grown = [];
+      for (const s of spec.specs)
+        for (const o of s.entry.objects)
+          grown.push(...o.glyphCellsAt(s.f, { color: light2 ? "#111" : "#fafafa" }));
+    } else {
+      cells = state.baseCells;
+    }
     const effectiveImage = effectiveImageForTerm(term);
     if (effectiveImage) {
       if (state.options.colorMap) {
@@ -4421,9 +4948,7 @@ ${inner}` });
         });
       }
     }
-    if (state.playback.everStarted && term) {
-      cells = applyCitationHighlight(cells, { highlightCells: highlightCellsForTerm(term) });
-    }
+    if (grown) cells = cells.concat(grown);
     const light = state.options.lightBg;
     renderGrid(ctx, cells, {
       font: fontString(state.fontSize),
@@ -4433,6 +4958,56 @@ ${inner}` });
       height: state.cssHeight,
       lineHeight: state.fontSize * state.lineHeightRatio
     });
+  }
+  function startTransition(incomingEntry) {
+    const pb = state.playback;
+    let outgoing = null;
+    if (pb.anim && pb.anim.active) {
+      outgoing = pb.anim.incoming;
+      if (pb.anim.rafId != null) cancelAnimationFrame(pb.anim.rafId);
+    } else if (pb.settled) {
+      outgoing = pb.settled.entry;
+    }
+    if (outgoing && outgoing.termIndex === incomingEntry.termIndex) outgoing = null;
+    const removeTerms = [incomingEntry.term];
+    if (outgoing) removeTerms.push(outgoing.term);
+    const baseFont = fontString(state.fontSize);
+    const modifiedSolve = {
+      ...state.layoutSolve,
+      prepareds: buildModifiedPrepareds(state.books, pb.canonical, removeTerms, baseFont)
+    };
+    pb.settled = null;
+    pb.anim = {
+      incoming: incomingEntry,
+      outgoing,
+      startTs: performance.now(),
+      durationMs: ANIM_MS,
+      modifiedSolve,
+      rafId: null,
+      active: true
+    };
+    pb.anim.rafId = requestAnimationFrame(animFrame);
+  }
+  function animFrame() {
+    const pb = state.playback;
+    const anim = pb.anim;
+    if (!anim || !anim.active) return;
+    const p = clamp01((performance.now() - anim.startTs) / anim.durationMs);
+    renderCanvas();
+    if (p < 1) {
+      anim.rafId = requestAnimationFrame(animFrame);
+    } else {
+      anim.active = false;
+      anim.rafId = null;
+      pb.settled = { entry: anim.incoming, modifiedSolve: anim.incoming.modifiedSolveSelf };
+      pb.anim = null;
+      renderCanvas();
+    }
+  }
+  function stopAnim() {
+    const pb = state.playback;
+    if (pb.anim && pb.anim.rafId != null) cancelAnimationFrame(pb.anim.rafId);
+    pb.anim = null;
   }
   function renderChiron() {
     const light = state.options.lightBg;
@@ -4472,7 +5047,7 @@ ${inner}` });
     pb.everStarted = true;
     updateTermUI();
     onTermChanged();
-    renderCanvas();
+    startTransition(prepareTermObjects(pb.termIndex));
     renderChiron();
     if (manual) bumpIdle();
   }
@@ -4497,7 +5072,7 @@ ${inner}` });
     pb.everStarted = true;
     updateTermUI();
     onTermChanged();
-    renderCanvas();
+    startTransition(prepareTermObjects(pb.termIndex));
     renderChiron();
     scheduleTick();
   }
@@ -4584,18 +5159,9 @@ ${inner}` });
     });
     return ti.manifestLoading;
   }
-  function pickIndexFor(slug) {
+  function hasTermImage(slug) {
     const ti = state.termImages;
-    if (!slug || !ti.manifest) return null;
-    if (ti.pick.has(slug)) return ti.pick.get(slug);
-    const indices = ti.manifest[slug];
-    if (!indices || !indices.length) {
-      ti.pick.set(slug, null);
-      return null;
-    }
-    const chosen = indices[Math.floor(Math.random() * indices.length)];
-    ti.pick.set(slug, chosen);
-    return chosen;
+    return !!(slug && ti.manifest && ti.manifest[slug]);
   }
   function bumpLRU(slug) {
     const ti = state.termImages;
@@ -4620,9 +5186,8 @@ ${inner}` });
       return entry.img;
     }
     if (entry && entry.loading) return null;
-    const idx = pickIndexFor(slug);
-    if (idx == null) return null;
-    const url = window.__DIST__ ? window.__DIST__.images[`${slug}_${idx}`] : `./images/terms/${encodeURIComponent(slug)}_${idx}.jpg`;
+    if (!hasTermImage(slug)) return null;
+    const url = window.__DIST__ ? window.__DIST__.images[slug] : `./images/terms/${encodeURIComponent(slug)}.jpg`;
     if (!url) return null;
     entry = { img: null, loading: null };
     ti.cache.set(slug, entry);
@@ -4714,8 +5279,16 @@ ${inner}` });
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
+      stopAnim();
       resizeCanvasToWindow();
       rebuildGrid();
+      const pb = state.playback;
+      if (pb.everStarted && pb.terms.length) {
+        const entry = prepareTermObjects(pb.termIndex);
+        pb.settled = { entry, modifiedSolve: entry.modifiedSolveSelf };
+      } else {
+        pb.settled = null;
+      }
       renderCanvas();
       renderChiron();
     }, 120);
@@ -4723,8 +5296,13 @@ ${inner}` });
   async function boot() {
     setStatus("loading Tender Buttons\u2026");
     resizeCanvasToWindow();
-    if (document.fonts && document.fonts.ready) {
+    if (document.fonts && document.fonts.load) {
       try {
+        await Promise.all([
+          document.fonts.load("400 16px 'Ovo'"),
+          document.fonts.load("500 16px 'Ovo'"),
+          document.fonts.load("700 16px 'Ovo'")
+        ]);
         await document.fonts.ready;
       } catch {
       }
@@ -4784,7 +5362,7 @@ ${inner}` });
     }
   }
   boot();
-  window.__aiButtons = {
+  window.__gsButtons = {
     state,
     rebuildGrid,
     renderCanvas,

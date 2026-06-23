@@ -1,5 +1,5 @@
-The Button Tenderizer — a philosophical lexicon presentation
-============================================================
+Tender Buttons — a philosophical lexicon presentation
+=====================================================
 
 TO VIEW: double-click "index.html" (it opens in your default browser).
 
